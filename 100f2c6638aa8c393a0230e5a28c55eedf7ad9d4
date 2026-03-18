@@ -1,0 +1,23 @@
+src/agent/context-gatherer.ts
+  51d67c80dde6e7bc 198-199,201,203-217,223,227-232,236,241,244-259,267-271,273,279-283,314-322,332-333,342,348-354
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.15",
+  "base_commit_sha": "100f2c6638aa8c393a0230e5a28c55eedf7ad9d4",
+  "prompts": {
+    "51d67c80dde6e7bc": {
+      "agent_id": {
+        "tool": "windsurf",
+        "id": "356c8d22-d405-4ffb-8ee2-933ca2489fd5",
+        "model": "unknown"
+      },
+      "human_author": "Pratishtha <pratishtha.yadav@sarasanalytics.com>",
+      "messages": [],
+      "total_additions": 122,
+      "total_deletions": 22,
+      "accepted_lines": 109,
+      "overriden_lines": 0
+    }
+  }
+}
