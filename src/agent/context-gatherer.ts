@@ -195,42 +195,92 @@ export class ContextGatherer {
     const functionLines: string[] = [lines[startLineIndex]];
     let braceCount = 0;
     let foundOpenBrace = false;
+    let inString = false;
+    let stringChar = '';
     
-    // Check if the function definition has an opening brace on the same line
+    // Process the first line character by character, handling strings
     const firstLine = lines[startLineIndex];
-    for (const char of firstLine) {
-      if (char === '{') {
-        braceCount++;
-        foundOpenBrace = true;
-      } else if (char === '}') {
-        braceCount--;
-      }
-    }
-    
-    // If we found the complete function on one line (arrow function)
-    if (foundOpenBrace && braceCount === 0) {
-      return functionLines;
-    }
-    
-    // Otherwise, continue reading lines until we find the closing brace
-    for (let i = startLineIndex + 1; i < lines.length && i < startLineIndex + 50; i++) {
-      functionLines.push(lines[i]);
+    for (let i = 0; i < firstLine.length; i++) {
+      const char = firstLine[i];
+      const prevChar = i > 0 ? firstLine[i - 1] : '';
       
-      for (const char of lines[i]) {
+      // Handle string literals (ignore braces inside strings)
+      if ((char === '"' || char === "'" || char === '`') && prevChar !== '\\') {
+        if (!inString) {
+          inString = true;
+          stringChar = char;
+        } else if (char === stringChar) {
+          inString = false;
+        }
+      }
+      
+      if (!inString) {
         if (char === '{') {
           braceCount++;
           foundOpenBrace = true;
         } else if (char === '}') {
           braceCount--;
-          if (foundOpenBrace && braceCount === 0) {
-            // Found the closing brace of the function
-            return functionLines;
+        }
+      }
+    }
+    
+    logger.debug('Function extraction started', {
+      startLine: startLineIndex + 1,
+      firstLine: firstLine.trim(),
+      initialBraceCount: braceCount,
+      foundOpenBrace,
+    });
+    
+    // If we found the complete function on one line (arrow function)
+    if (foundOpenBrace && braceCount === 0) {
+      logger.debug('Single-line function detected');
+      return functionLines;
+    }
+    
+    // Otherwise, continue reading lines until we find the closing brace
+    for (let i = startLineIndex + 1; i < lines.length && i < startLineIndex + 100; i++) {
+      functionLines.push(lines[i]);
+      
+      inString = false;
+      for (let j = 0; j < lines[i].length; j++) {
+        const char = lines[i][j];
+        const prevChar = j > 0 ? lines[i][j - 1] : '';
+        
+        // Handle string literals
+        if ((char === '"' || char === "'" || char === '`') && prevChar !== '\\') {
+          if (!inString) {
+            inString = true;
+            stringChar = char;
+          } else if (char === stringChar) {
+            inString = false;
+          }
+        }
+        
+        if (!inString) {
+          if (char === '{') {
+            braceCount++;
+            foundOpenBrace = true;
+          } else if (char === '}') {
+            braceCount--;
+            if (foundOpenBrace && braceCount === 0) {
+              // Found the closing brace of the function
+              logger.debug('Function extraction completed', {
+                endLine: i + 1,
+                totalLines: functionLines.length,
+                lastLine: lines[i].trim(),
+              });
+              return functionLines;
+            }
           }
         }
       }
     }
     
-    // If we didn't find the closing brace, return what we have (max 50 lines)
+    // If we didn't find the closing brace, return what we have (max 100 lines)
+    logger.warn('Function extraction incomplete - closing brace not found', {
+      linesExtracted: functionLines.length,
+      finalBraceCount: braceCount,
+    });
     return functionLines;
   }
 
@@ -261,9 +311,15 @@ export class ContextGatherer {
         });
         
         // Find the EXACT function definition (not callers)
-        // Look for: "private _normalizeValue(" or "_normalizeValue(" or "_normalizeValue ="
-        const functionDefRegex = new RegExp(`(private|public|protected)?\\s*${methodName}\\s*[(:=]`);
-        const functionLineIndex = lines.findIndex(line => functionDefRegex.test(line));
+        // Must match: "private _normalizeValue(" or "  _normalizeValue(" at start of line
+        // Should NOT match: "this._normalizeValue(" or "const x = this._normalizeValue("
+        const functionDefRegex = new RegExp(`^\\s*(private|public|protected|static)?\\s*${methodName}\\s*[(:=]`);
+        const functionLineIndex = lines.findIndex(line => {
+          const matches = functionDefRegex.test(line);
+          // Extra check: make sure it's not a method call (no 'this.' or object reference before it)
+          const isCall = line.includes(`this.${methodName}`) || line.includes(`.${methodName}`);
+          return matches && !isCall;
+        });
         
         if (functionLineIndex !== -1) {
           // Extract the complete function body
@@ -273,6 +329,8 @@ export class ContextGatherer {
             functionName: methodName,
             startLine: functionLineIndex + 1,
             bodyLines: functionBody.length,
+            firstLine: functionBody[0],
+            lastLine: functionBody[functionBody.length - 1],
           });
           
           const numberedLines = functionBody.map((line: string, idx: number) => {
@@ -281,12 +339,19 @@ export class ContextGatherer {
             return `${marker}${lineNum}: ${line}`;
           }).join('\n');
           
-          return `// ERROR: ${error.message}
+          const result = `// ERROR: ${error.message}
 // FUNCTION: ${fullFunctionName}
 // INSTRUCTION: Fix the error IN THIS FUNCTION, not in the callers. Add null/undefined checks where needed.
 // Original error was at minified line ${error.line}, mapped to this source function:
 
 ${numberedLines}`;
+
+          logger.info('Function context prepared for AI', {
+            contextLength: result.length,
+            contextPreview: result.substring(0, 500),
+          });
+          
+          return result;
         } else {
           logger.warn('Function definition not found, searching for any reference', { methodName });
           
